@@ -60,7 +60,9 @@ public interface AbstractGeoDnsService extends Entity {
     @SuppressWarnings("serial")
     @SetFromFlag("hostAndPortSensor")
     BasicAttributeSensorAndConfigKey<AttributeSensor<String>> SOURCE_HOSTPORT_SENSOR = new BasicAttributeSensorAndConfigKey<>(
-            new TypeToken<AttributeSensor<String>>() {}, "geodns.sensor.hostandport", "host:port sensor on members. If absent defaults to host.name, host.address, main.uri or webapp.url", null);
+            new TypeToken<AttributeSensor<String>>() {},
+            "geodns.sensor.hostandport",
+            "host:port sensor on members. If absent defaults to host.name, host.address, main.uri or webapp.url", null);
 
     /** @see Lifecycle#RUNNING */
     @SetFromFlag("filterForRunning")

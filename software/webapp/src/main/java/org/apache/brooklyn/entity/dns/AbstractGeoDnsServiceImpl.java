@@ -66,6 +66,8 @@ public abstract class AbstractGeoDnsServiceImpl extends AbstractEntity implement
     @SetFromFlag
     protected Group targetEntityProvider;
     protected AbstractMembershipTrackingPolicy tracker;
+    /** Guards access to {@link #tracker}. */
+    protected final Object trackerLock = new Object[0];
 
     protected Map<Entity, HostGeoInfo> targetHosts = Collections.synchronizedMap(new LinkedHashMap<Entity, HostGeoInfo>());
 
@@ -99,15 +101,15 @@ public abstract class AbstractGeoDnsServiceImpl extends AbstractEntity implement
     }
 
     @Override
-    public void onManagementBecomingMaster() {
-        super.onManagementBecomingMaster();
+    public void onManagementStarted() {
+        super.onManagementStarted();
         startTracker();
     }
 
     @Override
-    public void onManagementNoLongerMaster() {
+    public void onManagementStopped() {
         endTracker();
-        super.onManagementNoLongerMaster();
+        super.onManagementStopped();
     }
 
     @Override
@@ -135,45 +137,60 @@ public abstract class AbstractGeoDnsServiceImpl extends AbstractEntity implement
     /** should set up so these hosts are targeted, and setServiceState appropriately */
     protected abstract void reconfigureService(Collection<HostGeoInfo> targetHosts);
 
-    protected synchronized void startTracker() {
-        log.debug("JOHN in startTracker");
-        if (targetEntityProvider==null || !getManagementSupport().isDeployed()) {
-            log.debug("Tracker for "+this+" not yet active: "+targetEntityProvider+" / "+getManagementContext());
-            return;
-        }
-        endTracker();
+    /**
+     * Start the tracker.
+     * <p>
+     * Subclasses should take care to synchronize on {@link #trackerLock}.
+     */
+    protected void startTracker() {
+        synchronized (trackerLock) {
+            log.debug("JOHN in startTracker");
+            if (targetEntityProvider==null || !getManagementSupport().isDeployed()) {
+                log.debug("Tracker for "+this+" not yet active: "+targetEntityProvider+" / "+getManagementContext());
+                return;
+            }
+            endTracker();
 
-        ImmutableSet.Builder<Sensor<?>> sensorsToTrack = ImmutableSet.<Sensor<?>>builder();
+            ImmutableSet.Builder<Sensor<?>> sensorsToTrack = ImmutableSet.<Sensor<?>>builder();
 
-        if (config().get(SOURCE_HOSTPORT_SENSOR) != null) {
-            log.debug("JOHN just adding source hostport sensor");
-            sensorsToTrack.add(SOURCE_HOSTPORT_SENSOR);
-        } else {
-            log.debug("JOHN adding original sensors");
-            sensorsToTrack.add(
-                    HOSTNAME, ADDRESS, Attributes.MAIN_URI, WebAppService.ROOT_URL);
+            if (config().get(SOURCE_HOSTPORT_SENSOR) != null) {
+                log.debug("JOHN just adding source hostport sensor");
+                sensorsToTrack.add(SOURCE_HOSTPORT_SENSOR);
+            } else {
+                log.debug("JOHN adding original sensors");
+                sensorsToTrack.add(
+                        HOSTNAME, ADDRESS, Attributes.MAIN_URI, WebAppService.ROOT_URL);
+            }
+
+            // Don't subscribe to lifecycle events if entities will be included regardless of their status.
+            if (Boolean.TRUE.equals(config().get(FILTER_FOR_RUNNING))) {
+                sensorsToTrack.add(Attributes.SERVICE_STATE_ACTUAL);
+            }
+            log.debug("Initializing tracker for "+this+", following "+targetEntityProvider);
+            tracker = policies().add(PolicySpec.create(MemberTrackingPolicy.class)
+                    .displayName("GeoDNS targets tracker")
+                    .configure(AbstractMembershipTrackingPolicy.SENSORS_TO_TRACK, sensorsToTrack.build())
+                    .configure(AbstractMembershipTrackingPolicy.GROUP, targetEntityProvider));
+            refreshGroupMembership();
         }
 
-        // Don't subscribe to lifecycle events if entities will be included regardless of their status.
-        if (Boolean.TRUE.equals(config().get(FILTER_FOR_RUNNING))) {
-            sensorsToTrack.add(Attributes.SERVICE_STATE_ACTUAL);
-        }
-        log.debug("Initializing tracker for "+this+", following "+targetEntityProvider);
-        tracker = policies().add(PolicySpec.create(MemberTrackingPolicy.class)
-                .displayName("GeoDNS targets tracker")
-                .configure(AbstractMembershipTrackingPolicy.SENSORS_TO_TRACK, sensorsToTrack.build())
-                .configure(AbstractMembershipTrackingPolicy.GROUP, targetEntityProvider));
-        refreshGroupMembership();
     }
     @Override
     public AttributeSensor<String> getHostAndPortSensor() {
         return getAttribute(SOURCE_HOSTPORT_SENSOR);
     }
 
-    protected synchronized void endTracker() {
-        if (tracker == null || targetEntityProvider==null) return;
-        policies().remove(tracker);
-        tracker = null;
+    /**
+     * End the tracker.
+     * <p>
+     * Subclasses should take care to synchronize on {@link #trackerLock}.
+     */
+    protected void endTracker() {
+        synchronized (trackerLock) {
+            if (tracker == null || targetEntityProvider == null) return;
+            policies().remove(tracker);
+            tracker = null;
+        }
     }
 
     public static class MemberTrackingPolicy extends AbstractMembershipTrackingPolicy {
