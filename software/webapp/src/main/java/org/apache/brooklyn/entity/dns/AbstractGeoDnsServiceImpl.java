@@ -36,6 +36,7 @@ import java.util.Set;
 import org.apache.brooklyn.api.entity.Entity;
 import org.apache.brooklyn.api.entity.Group;
 import org.apache.brooklyn.api.policy.PolicySpec;
+import org.apache.brooklyn.api.sensor.AttributeSensor;
 import org.apache.brooklyn.api.sensor.Sensor;
 import org.apache.brooklyn.core.entity.AbstractEntity;
 import org.apache.brooklyn.core.entity.Attributes;
@@ -135,14 +136,24 @@ public abstract class AbstractGeoDnsServiceImpl extends AbstractEntity implement
     protected abstract void reconfigureService(Collection<HostGeoInfo> targetHosts);
 
     protected synchronized void startTracker() {
+        log.debug("JOHN in startTracker");
         if (targetEntityProvider==null || !getManagementSupport().isDeployed()) {
             log.debug("Tracker for "+this+" not yet active: "+targetEntityProvider+" / "+getManagementContext());
             return;
         }
         endTracker();
 
-        ImmutableSet.Builder<Sensor<?>> sensorsToTrack = ImmutableSet.<Sensor<?>>builder().add(
-                HOSTNAME, ADDRESS, Attributes.MAIN_URI, WebAppService.ROOT_URL);
+        ImmutableSet.Builder<Sensor<?>> sensorsToTrack = ImmutableSet.<Sensor<?>>builder();
+
+        if (config().get(SOURCE_HOSTPORT_SENSOR) != null) {
+            log.debug("JOHN just adding source hostport sensor");
+            sensorsToTrack.add(SOURCE_HOSTPORT_SENSOR);
+        } else {
+            log.debug("JOHN adding original sensors");
+            sensorsToTrack.add(
+                    HOSTNAME, ADDRESS, Attributes.MAIN_URI, WebAppService.ROOT_URL);
+        }
+
         // Don't subscribe to lifecycle events if entities will be included regardless of their status.
         if (Boolean.TRUE.equals(config().get(FILTER_FOR_RUNNING))) {
             sensorsToTrack.add(Attributes.SERVICE_STATE_ACTUAL);
@@ -153,6 +164,10 @@ public abstract class AbstractGeoDnsServiceImpl extends AbstractEntity implement
                 .configure(AbstractMembershipTrackingPolicy.SENSORS_TO_TRACK, sensorsToTrack.build())
                 .configure(AbstractMembershipTrackingPolicy.GROUP, targetEntityProvider));
         refreshGroupMembership();
+    }
+    @Override
+    public AttributeSensor<String> getHostAndPortSensor() {
+        return getAttribute(SOURCE_HOSTPORT_SENSOR);
     }
 
     protected synchronized void endTracker() {
@@ -222,16 +237,38 @@ public abstract class AbstractGeoDnsServiceImpl extends AbstractEntity implement
     protected boolean addTargetHost(Entity entity) {
         try {
             HostGeoInfo oldGeo = targetHosts.get(entity);
+
+            log.debug("JOHN in addTargetHost with entity {}", entity);
+
+            AttributeSensor<String> sourceHostPortSensor = config().get(SOURCE_HOSTPORT_SENSOR);
+            String requestedIp = null;
+            if (sourceHostPortSensor != null) {
+                log.debug("JOHN sourceHostPortSensor {} not null", entity);
+                requestedIp = getHackyIp(entity);
+            } else {
+                log.debug("JOHN sourceHostPortSensor {} was null", entity);
+            }
+            log.debug("JOHN the requestIp is {}", requestedIp);
             String hostname = inferHostname(entity);
             String ip = inferIp(entity);
             String addr = (getConfig(USE_HOSTNAMES) || ip == null) ? hostname : ip;
 
-            if (addr==null) addr = ip;
-            if (addr == null) {
-                if (entitiesWithoutHostname.add(entity)) {
-                    log.debug("GeoDns ignoring {} (no hostname/ip/URL info yet available)", entity);
+
+            if ( requestedIp != null) {
+                log.debug("JOHN setting addr ip and hostname");
+                addr = requestedIp.split(":")[0];
+                ip = requestedIp.split(":")[0];
+                hostname = requestedIp.split(":")[0];
+                log.debug("JOHN set addr and ip {} {}", addr, ip);
+                log.debug("JOHN set hostname {} {}", hostname);
+            } else {
+                if (addr == null) addr = ip;
+                if (addr == null) {
+                    if (entitiesWithoutHostname.add(entity)) {
+                        log.debug("GeoDns ignoring {} (no hostname/ip/URL info yet available)", entity);
+                    }
+                    return false;
                 }
-                return false;
             }
 
             // prefer the geo from the entity (or location parent), but fall back to inferring
@@ -351,7 +388,11 @@ public abstract class AbstractGeoDnsServiceImpl extends AbstractEntity implement
     }
 
     protected String inferIp(Entity entity) {
-        return entity.getAttribute(Attributes.ADDRESS);
+        return entity.sensors().get(Attributes.ADDRESS);
+    }
+
+    protected String getHackyIp(Entity entity) {
+        return entity.sensors().get(SOURCE_HOSTPORT_SENSOR).toString();
     }
 
     protected HostGeoInfo inferHostGeoInfo(String hostname, String ip) throws UnknownHostException {
