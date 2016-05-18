@@ -242,9 +242,9 @@ public abstract class AbstractGeoDnsServiceImpl extends AbstractEntity implement
 
             AttributeSensor<String> sourceHostPortSensor = config().get(SOURCE_HOSTPORT_SENSOR);
             String requestedIp = null;
-            if (sourceHostPortSensor != null) {
+            if ((sourceHostPortSensor != null) && (entity.sensors().get(sourceHostPortSensor)) != null) {
                 log.debug("JOHN sourceHostPortSensor {} not null", entity);
-                requestedIp = getHackyIp(entity);
+                requestedIp = entity.sensors().get(sourceHostPortSensor);
             } else {
                 log.debug("JOHN sourceHostPortSensor {} was null", entity);
             }
@@ -389,10 +389,6 @@ public abstract class AbstractGeoDnsServiceImpl extends AbstractEntity implement
 
     protected String inferIp(Entity entity) {
         return entity.sensors().get(Attributes.ADDRESS);
-    }
-
-    protected String getHackyIp(Entity entity) {
-        return entity.sensors().get(SOURCE_HOSTPORT_SENSOR).toString();
     }
 
     protected HostGeoInfo inferHostGeoInfo(String hostname, String ip) throws UnknownHostException {
